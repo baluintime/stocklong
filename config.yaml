@@ -1,0 +1,65 @@
+# StockLong configuration - NSE Options Buying Blueprint implementation.
+
+upstox:
+  # Create an app at https://account.upstox.com/developer/apps
+  # Secrets are NOT read from this file; export them as environment variables:
+  #   UPSTOX_API_KEY, UPSTOX_API_SECRET, UPSTOX_REDIRECT_URI
+  redirect_uri: "http://127.0.0.1:5000/callback"
+  token_path: "data/access_token.json"
+
+# When true, orders are logged and persisted but NEVER sent to the exchange.
+# Flip to false only after you have validated the system end to end.
+paper_trading: true
+
+# High-volume Nifty 50 liquidity underlyings only (blueprint guardrail #4).
+universe:
+  - symbol: RELIANCE
+    instrument_key: "NSE_EQ|INE002A01018"
+  - symbol: HDFCBANK
+    instrument_key: "NSE_EQ|INE040A01034"
+  - symbol: ICICIBANK
+    instrument_key: "NSE_EQ|INE090A01021"
+  - symbol: INFY
+    instrument_key: "NSE_EQ|INE009A01021"
+  - symbol: TCS
+    instrument_key: "NSE_EQ|INE467B01029"
+  - symbol: SBIN
+    instrument_key: "NSE_EQ|INE062A01020"
+  - symbol: LT
+    instrument_key: "NSE_EQ|INE018A01030"
+  - symbol: AXISBANK
+    instrument_key: "NSE_EQ|INE238A01034"
+  - symbol: KOTAKBANK
+    instrument_key: "NSE_EQ|INE237A01028"
+  - symbol: TATAMOTORS
+    instrument_key: "NSE_EQ|INE155A01022"
+
+history:
+  daily_lookback_days: 400      # enough for Ichimoku 52 + shift 26 on daily
+  hourly_lookback_days: 60
+
+strategies:
+  institutional_filter:
+    enabled: true
+    trigger_lookback_bars: 3    # TK cross + MACD cross must both fire within N hourly bars
+    macd_zero_tolerance_pct: 0.001   # "near or below zero" = macd <= 0.1% of price
+  renko_noise_killer:
+    enabled: true
+    box_mode: atr               # atr | percent
+    atr_period: 14
+    percent_box: 0.01           # 1% of spot when box_mode == percent
+
+risk:
+  # Blueprint: ITM contracts, delta 0.70-0.85, far month (T+2/T+3), limit orders only.
+  delta_min: 0.70
+  delta_max: 0.85
+  expiry_months_ahead_min: 2
+  expiry_months_ahead_max: 3
+  # Ironclad rule: square off at least 5 trading days before expiry (physical settlement).
+  square_off_days_before_expiry: 5
+  max_open_positions: 4
+  capital_per_trade_pct: 0.10   # max fraction of capital deployed per position
+  limit_order_buffer_pct: 0.005 # place BUY limit 0.5% above LTP, SELL 0.5% below
+
+store:
+  db_path: "data/positions.db"
