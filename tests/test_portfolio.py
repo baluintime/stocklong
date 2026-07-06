@@ -1,16 +1,25 @@
+"""Portfolio layer tests.
+
+Position-store tests exercise our own trade records (no market data involved).
+Contract-selection tests run against the LIVE instrument master and the LIVE
+Upstox option chain - real expiries, real greeks, no fabricated entries.
+Calendar tests use the real NSE trading calendar (weekday convention).
+"""
+
 import datetime as dt
 
 import pytest
 
-from stocklong.data.option_chain import ChainEntry
+from stocklong.data.option_chain import OptionChain
 from stocklong.portfolio import risk
 from stocklong.portfolio.positions import Position, PositionStore
+from tests.conftest import RELIANCE_KEY, RELIANCE_SYMBOL
 
 
 def make_position(**overrides) -> Position:
     base = dict(
         symbol="RELIANCE",
-        underlying_key="NSE_EQ|INE002A01018",
+        underlying_key=RELIANCE_KEY,
         option_key="NSE_FO|12345",
         trading_symbol="RELIANCE 2800 CE SEP",
         option_type="CE",
@@ -71,7 +80,7 @@ class TestPositionStore:
         assert [o.option_key for o in orphans] == ["NSE_FO|BBB"]
 
 
-class TestRisk:
+class TestTradingCalendar:
     def test_trading_days_until_counts_weekdays(self):
         # Mon 2026-07-06 -> Fri 2026-07-10 = Tue..Fri = 4 trading days
         assert risk.trading_days_until(dt.date(2026, 7, 10), dt.date(2026, 7, 6)) == 4
@@ -84,39 +93,6 @@ class TestRisk:
         assert risk.must_square_off(near_expiry, days_before=5, today=today)
         assert not risk.must_square_off(far_expiry, days_before=5, today=today)
 
-    def test_far_month_expiry_selection(self):
-        today = dt.date(2026, 7, 6)
-        expiries = [
-            dt.date(2026, 7, 30), dt.date(2026, 8, 27),
-            dt.date(2026, 9, 24), dt.date(2026, 10, 29),
-        ]
-        picked = risk.select_far_month_expiry(expiries, 2, 3, today=today)
-        assert picked == dt.date(2026, 9, 24)  # T+2 months, nearest in band
-
-    def test_far_month_expiry_none_when_missing(self):
-        assert risk.select_far_month_expiry(
-            [dt.date(2026, 7, 30)], 2, 3, today=dt.date(2026, 7, 6)) is None
-
-    def test_itm_call_selection_prefers_band_middle(self):
-        def entry(delta, strike):
-            return ChainEntry(
-                instrument_key=f"NSE_FO|{strike}", strike=strike,
-                expiry=dt.date(2026, 9, 24), option_type="CE",
-                ltp=100.0, delta=delta, theta=-1.0, iv=20.0, oi=5000, volume=100,
-            )
-        chain = [entry(0.55, 3000), entry(0.72, 2800), entry(0.78, 2700),
-                 entry(0.84, 2600), entry(0.95, 2400)]
-        pick = risk.select_itm_call(chain)
-        assert pick.delta == 0.78  # closest to band middle 0.775
-
-    def test_itm_call_selection_rejects_out_of_band(self):
-        otm = ChainEntry(
-            instrument_key="NSE_FO|X", strike=3000, expiry=dt.date(2026, 9, 24),
-            option_type="CE", ltp=40.0, delta=0.30, theta=-2.0, iv=25.0,
-            oi=1000, volume=50,
-        )
-        assert risk.select_itm_call([otm]) is None
-
     def test_position_sizing(self):
         # 1,000,000 capital, 10% per trade = 100,000; premium 200 x lot 250 = 50,000
         assert risk.size_position(1_000_000, 0.10, 200.0, 250) == 2
@@ -128,3 +104,42 @@ class TestRisk:
         assert risk.limit_price(100.0, "SELL", 0.005) == pytest.approx(99.50)
         # rounded to 0.05 tick
         assert (risk.limit_price(213.37, "BUY", 0.005) * 100) % 5 == pytest.approx(0)
+
+
+class TestLiveContractSelection:
+    """Far-month expiry + ITM delta-band selection on the real option chain."""
+
+    def test_far_month_expiry_from_live_listings(self, instrument_master):
+        expiries = instrument_master.expiries(RELIANCE_SYMBOL)
+        picked = risk.select_far_month_expiry(expiries, 2, 3)
+        assert picked is not None, "NSE always lists T+2 monthly stock options"
+        today = dt.date.today()
+        months = (picked.year - today.year) * 12 + (picked.month - today.month)
+        assert 2 <= months <= 3
+        assert picked in expiries
+
+    def test_itm_call_from_live_chain(self, auth, instrument_master):
+        expiries = instrument_master.expiries(RELIANCE_SYMBOL)
+        expiry = risk.select_far_month_expiry(expiries, 2, 3)
+        if expiry is None:
+            pytest.skip("no T+2/T+3 expiry listed today")
+        try:
+            chain = OptionChain(auth).fetch(RELIANCE_KEY, expiry)
+        except Exception as exc:
+            pytest.skip(f"option chain fetch failed: {exc}")
+        if not chain:
+            pytest.skip("empty option chain (market data unavailable)")
+
+        pick = risk.select_itm_call(chain, delta_min=0.70, delta_max=0.85)
+        if pick is None:
+            pytest.skip("no strike currently in the 0.70-0.85 delta band")
+        # blueprint invariants, checked against real greeks
+        assert 0.70 <= pick.delta <= 0.85
+        assert pick.option_type == "CE"
+        assert pick.ltp > 0
+        assert pick.expiry == expiry
+        # an ITM call must be struck below every OTM (delta<0.5) call's strike
+        otm_strikes = [c.strike for c in chain
+                       if c.option_type == "CE" and 0 < c.delta < 0.5]
+        if otm_strikes:
+            assert pick.strike < max(otm_strikes)

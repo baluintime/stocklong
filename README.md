@@ -39,6 +39,10 @@ python scripts/login.py <code>     # caches data/access_token.json
 # Dry scan: run both screeners across the Nifty-50 universe, print signals only
 python scripts/screener.py
 
+# Full live-data validation: prints every indicator input (cloud position,
+# TK lines, hourly MACD, Renko bricks) and both strategies' verdicts per symbol
+python scripts/validate_live.py
+
 # Full engine: hourly cycle during market hours (exits first, then entries),
 # with a live websocket LTP feed. Positions persist in data/positions.db
 # across restarts AND across days.
@@ -72,15 +76,27 @@ python scripts/positions.py close 3 245.50 "manual square-off"
 - Credentials come from environment variables only; the token cache and the
   position DB live under `data/`, which is git-ignored.
 
-## Tests
+## Tests — real live data only
 
 ```bash
+python scripts/login.py <code>   # market-data tests need a live token
 pytest
 ```
 
-Covers the indicator math (Ichimoku/MACD/Renko), both strategies' entry/exit
-logic, the risk guardrails (expiry window, delta band, sizing, limit pricing),
-and multi-day persistence of the position store.
+There is **no synthetic price data anywhere** — the engine trades only on
+live Upstox data, and the test suite validates against it too:
+
+- Indicator tests fetch real RELIANCE daily/hourly candles and verify the
+  math by closed-form recomputation and structural invariants.
+- Strategy tests re-derive the blueprint conditions from the same real data
+  and assert the strategy's verdict agrees, whatever the market is doing.
+- Contract-selection tests hit the live instrument master and the live
+  option chain (real expiries, real delta greeks).
+- Position-store and paper-broker tests exercise our own trade records
+  (no market data involved).
+
+Live-data tests skip with an explanatory message when no token is cached or
+the API is unreachable; the position-store/calendar/broker tests always run.
 
 ## Disclaimer
 
