@@ -4,7 +4,9 @@ upstox:
   # Create an app at https://account.upstox.com/developer/apps
   # Secrets are NOT read from this file; export them as environment variables:
   #   UPSTOX_API_KEY, UPSTOX_API_SECRET, UPSTOX_REDIRECT_URI
-  redirect_uri: "http://127.0.0.1:5000/callback"
+  # Must exactly match the redirect URI configured on your Upstox app.
+  # The dashboard's OAuth callback listens here (scripts/webapp.py, port 8080).
+  redirect_uri: "http://localhost:8080/callback"
   token_path: "data/access_token.json"
 
 # When true, orders are logged and persisted but NEVER sent to the exchange.

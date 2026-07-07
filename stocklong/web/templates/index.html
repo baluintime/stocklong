@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StockLong — NSE Options Engine</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2129; --border:#2b3540; --text:#dce3ea;
+          --muted:#8a97a5; --green:#3fb96c; --red:#e05b5b; --amber:#d9a13b;
+          --accent:#4a90d9; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--text); min-height:100vh;
+         font:14px/1.5 "Segoe UI", system-ui, sans-serif; padding:24px; }
+  h1 { font-size:20px; margin-bottom:4px; }
+  .sub { color:var(--muted); margin-bottom:20px; }
+  .chips { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px; }
+  .chip { padding:6px 14px; border-radius:16px; border:1px solid var(--border);
+          background:var(--panel); font-size:13px; }
+  .chip.ok    { border-color:var(--green); color:var(--green); }
+  .chip.bad   { border-color:var(--red);   color:var(--red); }
+  .chip.warn  { border-color:var(--amber); color:var(--amber); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:1000px){ .grid { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--border);
+           border-radius:10px; padding:16px; }
+  .panel h2 { font-size:15px; margin-bottom:12px; color:var(--text); }
+  .wide { grid-column:1 / -1; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px;
+           padding:8px 16px; font-size:13px; cursor:pointer; margin-right:8px; }
+  button:disabled { background:var(--border); color:var(--muted); cursor:default; }
+  button.danger { background:var(--red); }
+  a.btn { display:inline-block; background:var(--green); color:#fff;
+          text-decoration:none; border-radius:6px; padding:8px 16px;
+          font-size:13px; margin-right:8px; }
+  .tablewrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--border);
+           white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; }
+  td.entry { color:var(--green); font-weight:600; }
+  td.exit  { color:var(--red); font-weight:600; }
+  td.reason { white-space:normal; color:var(--muted); }
+  #logs { background:#0b0f13; border:1px solid var(--border); border-radius:6px;
+          padding:10px; height:220px; overflow-y:auto; font:12px/1.6 Consolas,
+          monospace; white-space:pre-wrap; color:var(--muted); }
+  .error { background:#3a1d1d; border:1px solid var(--red); border-radius:6px;
+           padding:10px 14px; margin-bottom:16px; color:#f0b2b2; }
+  .hint { color:var(--muted); font-size:12px; margin-top:8px; }
+</style>
+</head>
+<body>
+  <h1>StockLong — NSE Options Buying Engine</h1>
+  <div class="sub">Ichimoku institutional filter + Renko noise-killer on the Upstox API</div>
+
+  {% if oauth_error %}
+  <div class="error">Upstox login failed: {{ oauth_error }}</div>
+  {% endif %}
+
+  <div class="chips">
+    <span class="chip" id="chip-token">token: …</span>
+    <span class="chip" id="chip-market">market: …</span>
+    <span class="chip" id="chip-engine">engine: …</span>
+    <span class="chip {{ 'warn' if paper else 'bad' }}">
+      {{ 'PAPER TRADING' if paper else 'LIVE ORDERS' }}</span>
+    <span class="chip" id="chip-time">…</span>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Authentication</h2>
+      <a class="btn" href="/login">Login with Upstox</a>
+      <div class="hint">One click — the redirect lands back here and the day's
+        token is cached automatically. Your Upstox app's redirect URI must be
+        <b>{{ redirect_uri }}</b>.</div>
+      <div class="hint" id="token-detail"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Engine</h2>
+      <button id="btn-start" onclick="post('/api/engine/start')">Start engine loop</button>
+      <button id="btn-stop" class="danger" onclick="post('/api/engine/stop')">Stop</button>
+      <div class="hint">Runs a full cycle (exits → entries) every hour during
+        market hours. Positions persist in SQLite across days and restarts.</div>
+      <div class="hint" id="cycle-detail"></div>
+    </div>
+
+    <div class="panel wide">
+      <h2>Screener
+        <button id="btn-screen" style="float:right" onclick="runScreener()">Run screener</button>
+      </h2>
+      <div class="tablewrap"><table id="tbl-screener">
+        <thead><tr><th>Symbol</th><th>Strategy</th><th>Action</th><th>Reason</th></tr></thead>
+        <tbody><tr><td colspan="4" class="reason">not run yet</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <div class="panel wide">
+      <h2>Positions</h2>
+      <div class="tablewrap"><table id="tbl-positions">
+        <thead><tr><th>ID</th><th>Status</th><th>Symbol</th><th>Contract</th>
+          <th>Qty</th><th>Entry</th><th>Exit</th><th>Expiry</th><th>Strategy</th>
+          <th>Exit reason</th></tr></thead>
+        <tbody><tr><td colspan="10" class="reason">loading…</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <div class="panel wide">
+      <h2>Engine log</h2>
+      <div id="logs">…</div>
+    </div>
+  </div>
+
+<script>
+async function post(url) {
+  await fetch(url, {method:'POST'});
+  refreshStatus();
+}
+async function runScreener() {
+  document.getElementById('btn-screen').disabled = true;
+  await fetch('/api/screener', {method:'POST'});
+  pollScreener();
+}
+async function pollScreener() {
+  const r = await (await fetch('/api/screener')).json();
+  const body = document.querySelector('#tbl-screener tbody');
+  if (r.status === 'running') {
+    body.innerHTML = '<tr><td colspan="4" class="reason">scanning universe…</td></tr>';
+    setTimeout(pollScreener, 2000);
+    return;
+  }
+  document.getElementById('btn-screen').disabled = false;
+  if (r.results.length)
+    body.innerHTML = r.results.map(x =>
+      `<tr><td>${x.symbol}</td><td>${x.strategy}</td>` +
+      `<td class="${x.entry ? 'entry' : ''}">${x.action}</td>` +
+      `<td class="reason">${x.reason}</td></tr>`).join('');
+}
+async function refreshStatus() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    setChip('chip-token', 'token: ' + (s.token.ok ? 'OK' : 'MISSING'), s.token.ok);
+    setChip('chip-market', 'market: ' + (s.market_open ? 'OPEN' : 'CLOSED'), s.market_open);
+    setChip('chip-engine', 'engine: ' + (s.engine_running ? 'RUNNING' : 'STOPPED'), s.engine_running);
+    document.getElementById('chip-time').textContent = 'IST ' + s.ist_time.slice(11, 19);
+    document.getElementById('token-detail').textContent = s.token.detail;
+    document.getElementById('cycle-detail').textContent =
+      s.last_cycle ? 'last cycle: ' + s.last_cycle : 'no cycle run yet';
+    document.getElementById('btn-start').disabled = s.engine_running;
+    document.getElementById('btn-stop').disabled = !s.engine_running;
+  } catch (e) { /* server restarting */ }
+}
+function setChip(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'chip ' + (ok ? 'ok' : 'bad');
+}
+async function refreshPositions() {
+  try {
+    const rows = await (await fetch('/api/positions')).json();
+    const body = document.querySelector('#tbl-positions tbody');
+    body.innerHTML = rows.length ? rows.map(p =>
+      `<tr><td>${p.id}</td><td>${p.status}</td><td>${p.symbol}</td>` +
+      `<td>${p.contract}</td><td>${p.qty}</td><td>${p.entry_price}</td>` +
+      `<td>${p.exit_price ?? '—'}</td><td>${p.expiry}</td><td>${p.strategy}</td>` +
+      `<td class="reason">${p.exit_reason ?? ''}</td></tr>`).join('')
+      : '<tr><td colspan="10" class="reason">no positions yet</td></tr>';
+  } catch (e) {}
+}
+async function refreshLogs() {
+  try {
+    const lines = await (await fetch('/api/logs')).json();
+    const el = document.getElementById('logs');
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+    el.textContent = lines.length ? lines.join('\n') : 'no log output yet';
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch (e) {}
+}
+refreshStatus(); refreshPositions(); refreshLogs(); pollScreener();
+setInterval(refreshStatus, 5000);
+setInterval(refreshPositions, 15000);
+setInterval(refreshLogs, 5000);
+</script>
+</body>
+</html>

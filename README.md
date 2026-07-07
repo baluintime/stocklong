@@ -30,20 +30,37 @@ take precedence if set:
 ```
 UPSTOX_API_KEY=your-app-api-key
 UPSTOX_API_SECRET=your-app-secret
-UPSTOX_REDIRECT_URI=http://127.0.0.1:5000/callback   # must match your app
+UPSTOX_REDIRECT_URI=http://localhost:8080/callback   # must match your app
 ```
 
-Upstox access tokens expire daily (~3:30 AM IST), so log in each morning:
+## Web dashboard (recommended)
+
+Everything runs from the browser — including the daily Upstox login, with no
+manual code copying:
+
+```bash
+python scripts/webapp.py       # then open http://localhost:8080
+```
+
+- **Login with Upstox** button → the OAuth redirect lands on
+  `http://localhost:8080/callback` and the day's token is cached
+  automatically. Set exactly that redirect URI on your Upstox app
+  (https://account.upstox.com/developer/apps) and in `.env`.
+- **Run screener** → scans the universe with both strategies, results in a table.
+- **Start engine loop** → hourly blueprint cycle (exits → entries) during
+  market hours; positions persist in SQLite across days/restarts.
+- Live positions table and engine log stream on the same page.
+
+Upstox tokens expire daily (~3:30 AM IST) — each morning is just one click on
+the dashboard's login button.
+
+## CLI usage (headless alternative)
 
 ```bash
 python scripts/login.py            # prints the authorization URL
 # open it, authorize, copy the ?code=... value from the redirect
 python scripts/login.py <code>     # caches data/access_token.json
-```
 
-## Usage
-
-```bash
 # Dry scan: run both screeners across the Nifty-50 universe, print signals only
 python scripts/screener.py
 
