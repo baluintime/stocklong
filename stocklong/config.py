@@ -9,7 +9,29 @@ from typing import Any
 
 import yaml
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
+
+
+def load_dotenv(path: str | Path | None = None) -> None:
+    """Load KEY=VALUE pairs from a .env file into os.environ.
+
+    Real environment variables always win - a value already set in the shell
+    is never overwritten by the file. Lines starting with # and blank lines
+    are ignored; surrounding quotes on values are stripped."""
+    env_path = Path(path) if path else DEFAULT_ENV_PATH
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 @dataclass
@@ -18,6 +40,7 @@ class Config:
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Config":
+        load_dotenv()  # picks up UPSTOX_* credentials from .env if present
         cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
         with open(cfg_path) as fh:
             return cls(raw=yaml.safe_load(fh) or {})
@@ -60,7 +83,7 @@ def _require_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
         raise RuntimeError(
-            f"Environment variable {name} is not set. "
-            "Export your Upstox app credentials before running."
+            f"{name} is not set. Put it in the .env file at the project root "
+            "(copy .env.example) or export it in your shell."
         )
     return value

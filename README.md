@@ -20,9 +20,17 @@ Systematic long-options engine for NSE stock options, implementing the
 
 ```bash
 pip install -r requirements.txt
-export UPSTOX_API_KEY="your-app-key"
-export UPSTOX_API_SECRET="your-app-secret"
-export UPSTOX_REDIRECT_URI="http://127.0.0.1:5000/callback"   # must match your app
+cp .env.example .env    # then edit .env with your Upstox app key/secret
+```
+
+Credentials live in the git-ignored `.env` file at the project root (loaded
+automatically on startup); shell environment variables with the same names
+take precedence if set:
+
+```
+UPSTOX_API_KEY=your-app-api-key
+UPSTOX_API_SECRET=your-app-secret
+UPSTOX_REDIRECT_URI=http://127.0.0.1:5000/callback   # must match your app
 ```
 
 Upstox access tokens expire daily (~3:30 AM IST), so log in each morning:
