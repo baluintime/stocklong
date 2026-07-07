@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -64,50 +65,57 @@ class PositionStore:
     def __init__(self, db_path: str | Path = "data/positions.db"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.db_path))
+        # The store is shared between API threads and the engine/scan
+        # background threads: allow cross-thread use and serialize access.
+        self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(SCHEMA)
-        self._conn.commit()
+        self._lock = threading.RLock()
+        with self._lock:
+            self._conn.executescript(SCHEMA)
+            self._conn.commit()
 
     def open_position(self, pos: Position) -> Position:
-        cur = self._conn.execute(
-            """INSERT INTO positions
-               (symbol, underlying_key, option_key, trading_symbol, option_type,
-                strike, expiry, lot_size, quantity, entry_price, entry_date,
-                strategy, status, meta)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'OPEN',?)""",
-            (
-                pos.symbol, pos.underlying_key, pos.option_key, pos.trading_symbol,
-                pos.option_type, pos.strike, pos.expiry.isoformat(), pos.lot_size,
-                pos.quantity, pos.entry_price, pos.entry_date.isoformat(),
-                pos.strategy, json.dumps(pos.meta),
-            ),
-        )
-        self._conn.commit()
-        pos.id = cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO positions
+                   (symbol, underlying_key, option_key, trading_symbol, option_type,
+                    strike, expiry, lot_size, quantity, entry_price, entry_date,
+                    strategy, status, meta)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'OPEN',?)""",
+                (
+                    pos.symbol, pos.underlying_key, pos.option_key, pos.trading_symbol,
+                    pos.option_type, pos.strike, pos.expiry.isoformat(), pos.lot_size,
+                    pos.quantity, pos.entry_price, pos.entry_date.isoformat(),
+                    pos.strategy, json.dumps(pos.meta),
+                ),
+            )
+            self._conn.commit()
+            pos.id = cur.lastrowid
         return pos
 
     def close_position(
         self, position_id: int, exit_price: float, exit_reason: str,
         exit_date: dt.date | None = None,
     ) -> None:
-        self._conn.execute(
-            """UPDATE positions
-               SET status='CLOSED', exit_price=?, exit_date=?, exit_reason=?
-               WHERE id=? AND status='OPEN'""",
-            (
-                exit_price,
-                (exit_date or dt.date.today()).isoformat(),
-                exit_reason,
-                position_id,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """UPDATE positions
+                   SET status='CLOSED', exit_price=?, exit_date=?, exit_reason=?
+                   WHERE id=? AND status='OPEN'""",
+                (
+                    exit_price,
+                    (exit_date or dt.date.today()).isoformat(),
+                    exit_reason,
+                    position_id,
+                ),
+            )
+            self._conn.commit()
 
     def open_positions(self) -> list[Position]:
-        rows = self._conn.execute(
-            "SELECT * FROM positions WHERE status='OPEN' ORDER BY entry_date"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM positions WHERE status='OPEN' ORDER BY entry_date"
+            ).fetchall()
         return [self._to_position(r) for r in rows]
 
     def has_open_position(self, symbol: str, strategy: str | None = None) -> bool:
@@ -116,10 +124,12 @@ class PositionStore:
         if strategy:
             query += " AND strategy=?"
             params.append(strategy)
-        return self._conn.execute(query, params).fetchone()[0] > 0
+        with self._lock:
+            return self._conn.execute(query, params).fetchone()[0] > 0
 
     def all_positions(self) -> list[Position]:
-        rows = self._conn.execute("SELECT * FROM positions ORDER BY id").fetchall()
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM positions ORDER BY id").fetchall()
         return [self._to_position(r) for r in rows]
 
     def reconcile(self, broker_option_keys: set[str]) -> list[Position]:

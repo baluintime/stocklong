@@ -31,8 +31,10 @@ class OptionContract:
 
 
 class InstrumentMaster:
-    def __init__(self, cache_dir: str | Path = "data"):
+    def __init__(self, cache_dir: str | Path = "data", force_refresh: bool = False):
         self.cache_path = Path(cache_dir) / f"nse_instruments_{dt.date.today()}.json"
+        if force_refresh and self.cache_path.exists():
+            self.cache_path.unlink()
         self._records: list[dict] | None = None
 
     def _load(self) -> list[dict]:
@@ -80,3 +82,27 @@ class InstrumentMaster:
 
     def expiries(self, underlying_symbol: str) -> list[dt.date]:
         return sorted({c.expiry for c in self.option_contracts(underlying_symbol)})
+
+    def fo_underlyings(self) -> list[dict]:
+        """The live NSE F&O stock universe, derived from listed option contracts.
+
+        Nothing is hardcoded: every equity underlying that currently has stock
+        options listed on NSE is returned, straight from the day's instrument
+        master. Each entry: {symbol, instrument_key (NSE_EQ|...), lot_size}."""
+        seen: dict[str, dict] = {}
+        for rec in self._load():
+            if rec.get("segment") != "NSE_FO":
+                continue
+            if rec.get("instrument_type") not in ("CE", "PE"):
+                continue
+            symbol = rec.get("asset_symbol")
+            underlying_key = rec.get("underlying_key", "")
+            if not symbol or not underlying_key.startswith("NSE_EQ"):
+                continue  # index options (NIFTY etc.) have no NSE_EQ underlying
+            if symbol not in seen:
+                seen[symbol] = {
+                    "symbol": symbol,
+                    "instrument_key": underlying_key,
+                    "lot_size": int(rec.get("lot_size", 0)),
+                }
+        return sorted(seen.values(), key=lambda x: x["symbol"])

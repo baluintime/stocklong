@@ -25,3 +25,9 @@ def macd_cross_up(macd_df: pd.DataFrame) -> pd.Series:
     """True on bars where the MACD line crosses above the signal line."""
     above = macd_df["macd"] > macd_df["signal"]
     return above & ~above.shift(1, fill_value=False)
+
+
+def macd_cross_down(macd_df: pd.DataFrame) -> pd.Series:
+    """True on bars where the MACD line crosses below the signal line."""
+    below = macd_df["macd"] < macd_df["signal"]
+    return below & ~below.shift(1, fill_value=False)

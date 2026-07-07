@@ -13,28 +13,16 @@ upstox:
 # Flip to false only after you have validated the system end to end.
 paper_trading: true
 
-# High-volume Nifty 50 liquidity underlyings only (blueprint guardrail #4).
+# The stock universe is NEVER hardcoded: at every application start it is
+# rebuilt from the exchange's live instrument master (all NSE stocks that
+# currently have F&O options listed).
 universe:
-  - symbol: RELIANCE
-    instrument_key: "NSE_EQ|INE002A01018"
-  - symbol: HDFCBANK
-    instrument_key: "NSE_EQ|INE040A01034"
-  - symbol: ICICIBANK
-    instrument_key: "NSE_EQ|INE090A01021"
-  - symbol: INFY
-    instrument_key: "NSE_EQ|INE009A01021"
-  - symbol: TCS
-    instrument_key: "NSE_EQ|INE467B01029"
-  - symbol: SBIN
-    instrument_key: "NSE_EQ|INE062A01020"
-  - symbol: LT
-    instrument_key: "NSE_EQ|INE018A01030"
-  - symbol: AXISBANK
-    instrument_key: "NSE_EQ|INE238A01034"
-  - symbol: KOTAKBANK
-    instrument_key: "NSE_EQ|INE237A01028"
-  - symbol: TATAMOTORS
-    instrument_key: "NSE_EQ|INE155A01022"
+  refresh_on_start: true   # re-download the instrument master on startup
+  max_symbols: 0           # 0 = scan the entire F&O universe; N = first N symbols
+
+scan:
+  auto_interval_minutes: 15  # dashboard auto-rescans this often while market is open
+  top_n: 25                  # scoreboard rows shown (0 = all)
 
 history:
   daily_lookback_days: 400      # enough for Ichimoku 52 + shift 26 on daily

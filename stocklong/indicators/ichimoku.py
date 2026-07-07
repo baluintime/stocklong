@@ -50,7 +50,24 @@ def bullish_cloud(ich: pd.DataFrame) -> pd.Series:
     return ich["senkou_a"] > ich["senkou_b"]
 
 
+def price_below_cloud(close: pd.Series, ich: pd.DataFrame) -> pd.Series:
+    """True where price is completely below the cloud."""
+    cloud_bottom = ich[["senkou_a", "senkou_b"]].min(axis=1)
+    return close < cloud_bottom
+
+
+def bearish_cloud(ich: pd.DataFrame) -> pd.Series:
+    """True where the cloud is red (Span A below Span B)."""
+    return ich["senkou_a"] < ich["senkou_b"]
+
+
 def tk_cross_up(ich: pd.DataFrame) -> pd.Series:
     """True on bars where Tenkan-sen crosses above Kijun-sen."""
     above = ich["tenkan"] > ich["kijun"]
     return above & ~above.shift(1, fill_value=False)
+
+
+def tk_cross_down(ich: pd.DataFrame) -> pd.Series:
+    """True on bars where Tenkan-sen crosses below Kijun-sen."""
+    below = ich["tenkan"] < ich["kijun"]
+    return below & ~below.shift(1, fill_value=False)

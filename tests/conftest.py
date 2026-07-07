@@ -61,15 +61,23 @@ def hourly_real(history):
     return _fetch_or_skip(lambda: history.hourly(RELIANCE_KEY, 60), "RELIANCE hourly")
 
 
+# Test scaffolding constants (well-known, permanently-listed F&O names); the
+# application itself never hardcodes a universe - it loads the live F&O list
+# from the exchange instrument master at startup.
+SAMPLE_UNDERLYINGS = {
+    "RELIANCE": "NSE_EQ|INE002A01018",
+    "HDFCBANK": "NSE_EQ|INE040A01034",
+    "ICICIBANK": "NSE_EQ|INE090A01021",
+}
+
+
 @pytest.fixture(scope="session")
-def universe_daily(history, config):
-    """Real daily candles for the first three universe symbols."""
+def universe_daily(history):
+    """Real daily candles for three liquid F&O underlyings."""
     out = {}
-    for entry in config.get("universe", [])[:3]:
-        out[entry["symbol"]] = _fetch_or_skip(
-            lambda key=entry["instrument_key"]: history.daily(key, 400),
-            f"{entry['symbol']} daily",
-        )
+    for symbol, key in SAMPLE_UNDERLYINGS.items():
+        out[symbol] = _fetch_or_skip(
+            lambda k=key: history.daily(k, 400), f"{symbol} daily")
     return out
 
 

@@ -40,9 +40,11 @@ def market_is_open(now: dt.datetime) -> bool:
 def main() -> None:
     cfg = Config.load()
     engine = Engine(cfg)
+    universe = engine.load_universe()  # live F&O list from the exchange
 
-    keys = [e["instrument_key"] for e in cfg.get("universe", [])]
-    keys += [p.option_key for p in engine.store.open_positions()]
+    # websockets cap out around 500 instruments; open positions come first
+    keys = [p.option_key for p in engine.store.open_positions()]
+    keys += [e["instrument_key"] for e in universe][: max(0, 400 - len(keys))]
     feed = None
     try:
         feed = LiveFeed(engine.auth, keys)

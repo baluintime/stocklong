@@ -1,12 +1,14 @@
-"""Strategy 2: The Daily Renko Noise-Killer Framework.
+"""Strategy 2: The Daily Renko Noise-Killer Framework (long AND short setups).
 
-Bricks are built from daily closes with an ATR(14) or 1%-of-spot box.
-MACD (12, 26, 9) is computed over the *brick close sequence*, not time candles.
+Bricks from daily closes, ATR(14) or 1%-of-spot box; MACD (12, 26, 9) over the
+brick close sequence.
 
-Entry:  two consecutive green bricks AND the Renko-MACD histogram turning
-        positive (positive now, non-positive on the previous brick or rising).
-Exit:   two consecutive red bricks against the position - liquidate instantly
-        (blueprint's premium-preservation rule).
+Long entry:   two consecutive green bricks + Renko-MACD histogram shifting
+              positive.
+Short entry:  two consecutive red bricks + histogram shifting negative
+              (mirror; the position is a bought PUT, never a short option).
+Exit:         two consecutive bricks against the position - liquidate
+              instantly (blueprint's premium-preservation rule).
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import pandas as pd
 
 from ..indicators.macd import macd
 from ..indicators.renko import renko_from_ohlc
-from .base import Signal, SignalAction
+from .base import LONG, Signal, SignalAction, entry_action
 
 
 class RenkoNoiseKiller:
@@ -35,40 +37,47 @@ class RenkoNoiseKiller:
         )
         return result.bricks, result.box_size
 
-    def evaluate(self, symbol: str, df_daily: pd.DataFrame) -> Signal:
+    def evaluate(self, symbol: str, df_daily: pd.DataFrame, direction: int = LONG) -> Signal:
         if len(df_daily) < 60:
-            return self._hold(symbol, "insufficient history")
+            return self._hold(symbol, "insufficient history", direction)
         bricks, box = self._bricks(df_daily)
         if len(bricks) < 40:
-            return self._hold(symbol, "not enough Renko bricks for MACD")
+            return self._hold(symbol, "not enough Renko bricks for MACD", direction)
+        side = "long" if direction == LONG else "short"
 
-        two_green = bool((bricks["direction"].iloc[-2:] == 1).all())
+        two_with = bool((bricks["direction"].iloc[-2:] == direction).all())
         macd_r = macd(bricks["close"])
         hist_now = float(macd_r["histogram"].iloc[-1])
         hist_prev = float(macd_r["histogram"].iloc[-2])
-        macro_shift = hist_now > 0 and (hist_prev <= 0 or hist_now > hist_prev)
+        # histogram shifting in the trade direction (sign-mirrored for shorts)
+        macro_shift = hist_now * direction > 0 and (
+            hist_prev * direction <= 0 or (hist_now - hist_prev) * direction > 0)
 
-        if two_green and macro_shift:
+        if two_with and macro_shift:
+            color = "green" if direction == LONG else "red"
             return Signal(
                 symbol=symbol,
-                action=SignalAction.ENTER_LONG,
+                action=entry_action(direction),
                 strategy=self.name,
-                reason="two consecutive green bricks + positive Renko-MACD shift",
+                direction=direction,
+                reason=f"{side}: two consecutive {color} bricks + Renko-MACD shift",
                 context={"box_size": box, "hist": hist_now, "bricks": len(bricks)},
             )
-        return self._hold(symbol, "no breakout: need 2 green bricks + MACD histogram shift")
+        return self._hold(
+            symbol, f"no {side} breakout: need 2 bricks with trend + MACD shift", direction)
 
-    def check_exit(self, symbol: str, df_daily: pd.DataFrame) -> Signal:
-        """Two consecutive red bricks => liquidate immediately."""
+    def check_exit(self, symbol: str, df_daily: pd.DataFrame, direction: int = LONG) -> Signal:
+        """Two consecutive bricks against the position => liquidate immediately."""
         bricks, _ = self._bricks(df_daily)
-        if len(bricks) >= 2 and bool((bricks["direction"].iloc[-2:] == -1).all()):
+        if len(bricks) >= 2 and bool((bricks["direction"].iloc[-2:] == -direction).all()):
+            color = "red" if direction == LONG else "green"
             return Signal(
-                symbol=symbol,
-                action=SignalAction.EXIT,
-                strategy=self.name,
-                reason="two consecutive red Renko bricks against the position",
+                symbol=symbol, action=SignalAction.EXIT, strategy=self.name,
+                direction=direction,
+                reason=f"two consecutive {color} Renko bricks against the position",
             )
-        return self._hold(symbol, "no two-red-brick breakdown")
+        return self._hold(symbol, "no two-brick breakdown against the position", direction)
 
-    def _hold(self, symbol: str, reason: str) -> Signal:
-        return Signal(symbol=symbol, action=SignalAction.HOLD, strategy=self.name, reason=reason)
+    def _hold(self, symbol: str, reason: str, direction: int) -> Signal:
+        return Signal(symbol=symbol, action=SignalAction.HOLD, strategy=self.name,
+                      direction=direction, reason=reason)

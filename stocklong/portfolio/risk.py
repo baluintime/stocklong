@@ -51,27 +51,34 @@ def select_far_month_expiry(
     return candidates[0] if candidates else None
 
 
-def select_itm_call(
+def select_itm_option(
     chain: list[ChainEntry],
+    option_type: str = "CE",
     delta_min: float = 0.70,
     delta_max: float = 0.85,
     min_oi: float = 0,
 ) -> ChainEntry | None:
-    """Pick the ITM call whose delta sits in the blueprint band.
+    """Pick the ITM option whose |delta| sits in the blueprint band.
 
-    Prefers the middle of the band (0.775) so premium is intrinsic-heavy
-    without paying for near-1.0 deltas that behave like stock."""
-    calls = [
+    Calls carry positive delta, puts negative - the band is applied to the
+    magnitude so 0.70-0.85 means the same moneyness on both sides. Prefers
+    the middle of the band (0.775) so premium is intrinsic-heavy without
+    paying for near-1.0 deltas that behave like the stock itself."""
+    candidates = [
         c for c in chain
-        if c.option_type == "CE"
-        and delta_min <= c.delta <= delta_max
+        if c.option_type == option_type
+        and delta_min <= abs(c.delta) <= delta_max
         and c.ltp > 0
         and c.oi >= min_oi
     ]
-    if not calls:
+    if not candidates:
         return None
     target = (delta_min + delta_max) / 2
-    return min(calls, key=lambda c: abs(c.delta - target))
+    return min(candidates, key=lambda c: abs(abs(c.delta) - target))
+
+
+def select_itm_call(chain: list[ChainEntry], **kwargs) -> ChainEntry | None:
+    return select_itm_option(chain, option_type="CE", **kwargs)
 
 
 def size_position(

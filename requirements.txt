@@ -5,5 +5,7 @@ PyYAML>=6.0
 # Official Upstox SDK - used for the V3 market-data websocket streamer.
 # REST calls (auth, historical, orders, option chain) use plain `requests`.
 upstox-python-sdk>=2.14.0
-Flask>=3.0
+fastapi>=0.110
+uvicorn>=0.29
+jinja2>=3.1
 pytest>=7.4

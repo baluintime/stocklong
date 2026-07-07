@@ -5,52 +5,71 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>StockLong — NSE Options Engine</title>
 <style>
-  :root { --bg:#0f1419; --panel:#1a2129; --border:#2b3540; --text:#dce3ea;
-          --muted:#8a97a5; --green:#3fb96c; --red:#e05b5b; --amber:#d9a13b;
-          --accent:#4a90d9; }
+  :root { --bg:#0e1217; --panel:#171d25; --panel2:#1d2531; --border:#2a3442;
+          --text:#dde4ec; --muted:#8b98a7; --green:#3fc472; --red:#ef6161;
+          --amber:#e0a63e; --accent:#4f9cf0; }
   * { box-sizing:border-box; margin:0; }
   body { background:var(--bg); color:var(--text); min-height:100vh;
-         font:14px/1.5 "Segoe UI", system-ui, sans-serif; padding:24px; }
-  h1 { font-size:20px; margin-bottom:4px; }
-  .sub { color:var(--muted); margin-bottom:20px; }
-  .chips { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px; }
-  .chip { padding:6px 14px; border-radius:16px; border:1px solid var(--border);
-          background:var(--panel); font-size:13px; }
-  .chip.ok    { border-color:var(--green); color:var(--green); }
-  .chip.bad   { border-color:var(--red);   color:var(--red); }
-  .chip.warn  { border-color:var(--amber); color:var(--amber); }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-  @media (max-width:1000px){ .grid { grid-template-columns:1fr; } }
+         font:14px/1.5 "Segoe UI", system-ui, sans-serif; padding:22px; }
+  header { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+           margin-bottom:6px; }
+  h1 { font-size:20px; }
+  .sub { color:var(--muted); font-size:13px; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 20px; }
+  .chip { padding:5px 13px; border-radius:15px; border:1px solid var(--border);
+          background:var(--panel); font-size:12.5px; }
+  .chip.ok   { border-color:var(--green); color:var(--green); }
+  .chip.bad  { border-color:var(--red);   color:var(--red); }
+  .chip.warn { border-color:var(--amber); color:var(--amber); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:1050px){ .grid { grid-template-columns:1fr; } }
   .panel { background:var(--panel); border:1px solid var(--border);
            border-radius:10px; padding:16px; }
-  .panel h2 { font-size:15px; margin-bottom:12px; color:var(--text); }
+  .panel h2 { font-size:14.5px; margin-bottom:10px; display:flex;
+              justify-content:space-between; align-items:center; }
   .wide { grid-column:1 / -1; }
   button { background:var(--accent); color:#fff; border:0; border-radius:6px;
-           padding:8px 16px; font-size:13px; cursor:pointer; margin-right:8px; }
+           padding:7px 15px; font-size:13px; cursor:pointer; }
   button:disabled { background:var(--border); color:var(--muted); cursor:default; }
   button.danger { background:var(--red); }
   a.btn { display:inline-block; background:var(--green); color:#fff;
-          text-decoration:none; border-radius:6px; padding:8px 16px;
-          font-size:13px; margin-right:8px; }
+          text-decoration:none; border-radius:6px; padding:7px 15px; font-size:13px; }
   .tablewrap { overflow-x:auto; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--border);
            white-space:nowrap; }
-  th { color:var(--muted); font-weight:600; }
-  td.entry { color:var(--green); font-weight:600; }
-  td.exit  { color:var(--red); font-weight:600; }
+  th { color:var(--muted); font-weight:600; font-size:12px;
+       text-transform:uppercase; letter-spacing:.4px; }
   td.reason { white-space:normal; color:var(--muted); }
-  #logs { background:#0b0f13; border:1px solid var(--border); border-radius:6px;
-          padding:10px; height:220px; overflow-y:auto; font:12px/1.6 Consolas,
+  .badge { display:inline-block; padding:2px 10px; border-radius:11px;
+           font-size:11.5px; font-weight:700; }
+  .badge.long  { background:rgba(63,196,114,.15); color:var(--green);
+                 border:1px solid var(--green); }
+  .badge.short { background:rgba(239,97,97,.15); color:var(--red);
+                 border:1px solid var(--red); }
+  .scorebar { display:inline-block; width:110px; height:9px; background:var(--panel2);
+              border-radius:5px; overflow:hidden; vertical-align:middle; margin-right:8px; }
+  .scorebar i { display:block; height:100%; border-radius:5px;
+                background:linear-gradient(90deg, var(--amber), var(--green)); }
+  .scorebar.short i { background:linear-gradient(90deg, var(--amber), var(--red)); }
+  .score-num { font-weight:700; }
+  .comp { color:var(--muted); font-size:11.5px; }
+  .comp b { color:var(--text); font-weight:600; }
+  #logs { background:#0a0e12; border:1px solid var(--border); border-radius:6px;
+          padding:10px; height:200px; overflow-y:auto; font:12px/1.6 Consolas,
           monospace; white-space:pre-wrap; color:var(--muted); }
   .error { background:#3a1d1d; border:1px solid var(--red); border-radius:6px;
-           padding:10px 14px; margin-bottom:16px; color:#f0b2b2; }
+           padding:10px 14px; margin-bottom:14px; color:#f0b2b2; }
   .hint { color:var(--muted); font-size:12px; margin-top:8px; }
+  .meta { color:var(--muted); font-size:12px; font-weight:400; }
+  progress { width:130px; height:8px; accent-color:var(--accent); }
 </style>
 </head>
 <body>
-  <h1>StockLong — NSE Options Buying Engine</h1>
-  <div class="sub">Ichimoku institutional filter + Renko noise-killer on the Upstox API</div>
+  <header>
+    <h1>StockLong</h1>
+    <span class="sub">Ichimoku institutional filter + Renko noise-killer · long CE / short PE · Upstox API</span>
+  </header>
 
   {% if oauth_error %}
   <div class="error">Upstox login failed: {{ oauth_error }}</div>
@@ -60,6 +79,7 @@
     <span class="chip" id="chip-token">token: …</span>
     <span class="chip" id="chip-market">market: …</span>
     <span class="chip" id="chip-engine">engine: …</span>
+    <span class="chip" id="chip-universe">universe: …</span>
     <span class="chip {{ 'warn' if paper else 'bad' }}">
       {{ 'PAPER TRADING' if paper else 'LIVE ORDERS' }}</span>
     <span class="chip" id="chip-time">…</span>
@@ -70,7 +90,7 @@
       <h2>Authentication</h2>
       <a class="btn" href="/login">Login with Upstox</a>
       <div class="hint">One click — the redirect lands back here and the day's
-        token is cached automatically. Your Upstox app's redirect URI must be
+        token is cached automatically. Upstox app redirect URI must be
         <b>{{ redirect_uri }}</b>.</div>
       <div class="hint" id="token-detail"></div>
     </div>
@@ -79,28 +99,42 @@
       <h2>Engine</h2>
       <button id="btn-start" onclick="post('/api/engine/start')">Start engine loop</button>
       <button id="btn-stop" class="danger" onclick="post('/api/engine/stop')">Stop</button>
-      <div class="hint">Runs a full cycle (exits → entries) every hour during
-        market hours. Positions persist in SQLite across days and restarts.</div>
+      <div class="hint">Hourly cycle (exits → entries) during market hours.
+        Long signals buy ITM calls, short signals buy ITM puts — far month,
+        limit orders only. Positions persist across days.</div>
       <div class="hint" id="cycle-detail"></div>
     </div>
 
     <div class="panel wide">
-      <h2>Screener
-        <button id="btn-screen" style="float:right" onclick="runScreener()">Run screener</button>
+      <h2>
+        <span>Confluence scoreboard
+          <span class="meta" id="scan-meta"></span></span>
+        <span>
+          <progress id="scan-progress" value="0" max="100" style="display:none"></progress>
+          <button id="btn-scan" onclick="runScan()">Scan now</button>
+        </span>
       </h2>
-      <div class="tablewrap"><table id="tbl-screener">
-        <thead><tr><th>Symbol</th><th>Strategy</th><th>Action</th><th>Reason</th></tr></thead>
-        <tbody><tr><td colspan="4" class="reason">not run yet</td></tr></tbody>
+      <div class="hint" style="margin:0 0 10px">Every F&amp;O stock (live list from
+        the exchange, refreshed at startup) is scored 0–100 on BOTH sides;
+        the table shows each stock's stronger side, best setups first.
+        Components: <b>M</b>acro cloud 30 · <b>TK</b> 20 · <b>MACD</b> 20 ·
+        <b>R</b>enko 30. Auto-rescans while the market is open.</div>
+      <div class="tablewrap"><table id="tbl-scan">
+        <thead><tr><th>#</th><th>Symbol</th><th>Side</th><th>Score</th>
+          <th>Close</th><th>M</th><th>TK</th><th>MACD</th><th>R</th>
+          <th>Long</th><th>Short</th></tr></thead>
+        <tbody><tr><td colspan="11" class="reason">no scan yet — log in and the
+          first scan starts automatically</td></tr></tbody>
       </table></div>
     </div>
 
     <div class="panel wide">
       <h2>Positions</h2>
       <div class="tablewrap"><table id="tbl-positions">
-        <thead><tr><th>ID</th><th>Status</th><th>Symbol</th><th>Contract</th>
-          <th>Qty</th><th>Entry</th><th>Exit</th><th>Expiry</th><th>Strategy</th>
-          <th>Exit reason</th></tr></thead>
-        <tbody><tr><td colspan="10" class="reason">loading…</td></tr></tbody>
+        <thead><tr><th>ID</th><th>Status</th><th>Side</th><th>Symbol</th>
+          <th>Contract</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Expiry</th>
+          <th>Strategy</th><th>Exit reason</th></tr></thead>
+        <tbody><tr><td colspan="11" class="reason">loading…</td></tr></tbody>
       </table></div>
     </div>
 
@@ -111,29 +145,20 @@
   </div>
 
 <script>
+let lastScanStamp = null;
+
 async function post(url) {
   await fetch(url, {method:'POST'});
   refreshStatus();
 }
-async function runScreener() {
-  document.getElementById('btn-screen').disabled = true;
-  await fetch('/api/screener', {method:'POST'});
-  pollScreener();
+async function runScan() {
+  await fetch('/api/scan', {method:'POST'});
+  refreshStatus();
 }
-async function pollScreener() {
-  const r = await (await fetch('/api/screener')).json();
-  const body = document.querySelector('#tbl-screener tbody');
-  if (r.status === 'running') {
-    body.innerHTML = '<tr><td colspan="4" class="reason">scanning universe…</td></tr>';
-    setTimeout(pollScreener, 2000);
-    return;
-  }
-  document.getElementById('btn-screen').disabled = false;
-  if (r.results.length)
-    body.innerHTML = r.results.map(x =>
-      `<tr><td>${x.symbol}</td><td>${x.strategy}</td>` +
-      `<td class="${x.entry ? 'entry' : ''}">${x.action}</td>` +
-      `<td class="reason">${x.reason}</td></tr>`).join('');
+function setChip(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'chip ' + (ok ? 'ok' : 'bad');
 }
 async function refreshStatus() {
   try {
@@ -141,29 +166,64 @@ async function refreshStatus() {
     setChip('chip-token', 'token: ' + (s.token.ok ? 'OK' : 'MISSING'), s.token.ok);
     setChip('chip-market', 'market: ' + (s.market_open ? 'OPEN' : 'CLOSED'), s.market_open);
     setChip('chip-engine', 'engine: ' + (s.engine_running ? 'RUNNING' : 'STOPPED'), s.engine_running);
+    const u = s.universe;
+    setChip('chip-universe',
+      'universe: ' + (u.count ? u.count + ' F&O stocks' : (u.error ? 'ERROR' : 'loading…')),
+      u.count > 0);
     document.getElementById('chip-time').textContent = 'IST ' + s.ist_time.slice(11, 19);
     document.getElementById('token-detail').textContent = s.token.detail;
     document.getElementById('cycle-detail').textContent =
       s.last_cycle ? 'last cycle: ' + s.last_cycle : 'no cycle run yet';
     document.getElementById('btn-start').disabled = s.engine_running;
     document.getElementById('btn-stop').disabled = !s.engine_running;
+
+    const prog = document.getElementById('scan-progress');
+    const scanning = s.scan_status === 'running';
+    document.getElementById('btn-scan').disabled = scanning;
+    prog.style.display = scanning ? 'inline-block' : 'none';
+    if (scanning && s.scan_total) { prog.value = s.scan_progress; prog.max = s.scan_total; }
+    if (!scanning) refreshScan();
   } catch (e) { /* server restarting */ }
 }
-function setChip(id, text, ok) {
-  const el = document.getElementById(id);
-  el.textContent = text;
-  el.className = 'chip ' + (ok ? 'ok' : 'bad');
+async function refreshScan() {
+  try {
+    const r = await (await fetch('/api/scan')).json();
+    if (r.updated_at === lastScanStamp || r.status === 'running') return;
+    lastScanStamp = r.updated_at;
+    document.getElementById('scan-meta').textContent =
+      r.updated_at ? ' — updated ' + r.updated_at.slice(11, 19) + ' IST' : '';
+    const body = document.querySelector('#tbl-scan tbody');
+    if (!r.rows || !r.rows.length) return;
+    body.innerHTML = r.rows.map((x, i) => {
+      const c = x.components;
+      const m = c.macro, tk = c.tk_state + c.tk_cross,
+            md = c.macd_state + c.macd_cross,
+            rk = c.renko_bricks + c.renko_hist + c.renko_rising;
+      const cls = x.side === 'LONG' ? 'long' : 'short';
+      return `<tr><td>${i+1}</td><td><b>${x.symbol}</b></td>` +
+        `<td><span class="badge ${cls}">${x.side}</span></td>` +
+        `<td><span class="scorebar ${cls}"><i style="width:${x.score}%"></i></span>` +
+        `<span class="score-num">${x.score}</span></td>` +
+        `<td>${x.close}</td>` +
+        `<td class="comp"><b>${m}</b>/30</td><td class="comp"><b>${tk}</b>/20</td>` +
+        `<td class="comp"><b>${md}</b>/20</td><td class="comp"><b>${rk}</b>/30</td>` +
+        `<td class="comp">${x.long_score}</td><td class="comp">${x.short_score}</td></tr>`;
+    }).join('');
+  } catch (e) {}
 }
 async function refreshPositions() {
   try {
     const rows = await (await fetch('/api/positions')).json();
     const body = document.querySelector('#tbl-positions tbody');
-    body.innerHTML = rows.length ? rows.map(p =>
-      `<tr><td>${p.id}</td><td>${p.status}</td><td>${p.symbol}</td>` +
-      `<td>${p.contract}</td><td>${p.qty}</td><td>${p.entry_price}</td>` +
-      `<td>${p.exit_price ?? '—'}</td><td>${p.expiry}</td><td>${p.strategy}</td>` +
-      `<td class="reason">${p.exit_reason ?? ''}</td></tr>`).join('')
-      : '<tr><td colspan="10" class="reason">no positions yet</td></tr>';
+    body.innerHTML = rows.length ? rows.map(p => {
+      const cls = p.side === 'SHORT' ? 'short' : 'long';
+      return `<tr><td>${p.id}</td><td>${p.status}</td>` +
+        `<td><span class="badge ${cls}">${p.side}</span></td>` +
+        `<td>${p.symbol}</td><td>${p.contract}</td><td>${p.qty}</td>` +
+        `<td>${p.entry_price}</td><td>${p.exit_price ?? '—'}</td>` +
+        `<td>${p.expiry}</td><td>${p.strategy}</td>` +
+        `<td class="reason">${p.exit_reason ?? ''}</td></tr>`;
+    }).join('') : '<tr><td colspan="11" class="reason">no positions yet</td></tr>';
   } catch (e) {}
 }
 async function refreshLogs() {
@@ -175,8 +235,8 @@ async function refreshLogs() {
     if (atBottom) el.scrollTop = el.scrollHeight;
   } catch (e) {}
 }
-refreshStatus(); refreshPositions(); refreshLogs(); pollScreener();
-setInterval(refreshStatus, 5000);
+refreshStatus(); refreshPositions(); refreshLogs();
+setInterval(refreshStatus, 4000);
 setInterval(refreshPositions, 15000);
 setInterval(refreshLogs, 5000);
 </script>

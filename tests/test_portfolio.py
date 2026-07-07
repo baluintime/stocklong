@@ -130,9 +130,9 @@ class TestLiveContractSelection:
         if not chain:
             pytest.skip("empty option chain (market data unavailable)")
 
-        pick = risk.select_itm_call(chain, delta_min=0.70, delta_max=0.85)
+        pick = risk.select_itm_option(chain, "CE", delta_min=0.70, delta_max=0.85)
         if pick is None:
-            pytest.skip("no strike currently in the 0.70-0.85 delta band")
+            pytest.skip("no call strike currently in the 0.70-0.85 delta band")
         # blueprint invariants, checked against real greeks
         assert 0.70 <= pick.delta <= 0.85
         assert pick.option_type == "CE"
@@ -143,3 +143,11 @@ class TestLiveContractSelection:
                        if c.option_type == "CE" and 0 < c.delta < 0.5]
         if otm_strikes:
             assert pick.strike < max(otm_strikes)
+
+        # short side: ITM put with the same |delta| band (put deltas negative)
+        put = risk.select_itm_option(chain, "PE", delta_min=0.70, delta_max=0.85)
+        if put is not None:
+            assert put.option_type == "PE"
+            assert 0.70 <= abs(put.delta) <= 0.85
+            # an ITM put is struck ABOVE spot, so above the ITM call's strike
+            assert put.strike > pick.strike

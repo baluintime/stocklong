@@ -6,11 +6,12 @@ Each run (typically once after the first hourly candle closes, then hourly):
      reconcile them against the broker's carry-forward positions.
   2. EXITS first - defense before offense:
        a. Ironclad expiry rule: square off <= 5 trading days before expiry.
-       b. Renko rule: two consecutive red daily bricks -> liquidate.
+       b. Renko rule: two consecutive bricks against the position -> liquidate.
        c. Institutional-filter rule: daily close back inside the cloud -> exit.
-  3. ENTRIES - scan the Nifty-50 universe with both strategies; on a signal,
-     pick a far-month ITM call (delta 0.70-0.85) via the option chain and
-     place a limit order sized off available capital.
+  3. ENTRIES - scan the LIVE F&O universe (refreshed from the exchange's
+     instrument master, never hardcoded) with both strategies in BOTH
+     directions; a long signal buys a far-month ITM call, a short signal buys
+     a far-month ITM put (delta magnitude 0.70-0.85), always via limit order.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from .data.option_chain import OptionChain
 from .data.realtime import RestQuotes
 from .portfolio import risk
 from .portfolio.positions import Position, PositionStore
-from .strategies import InstitutionalFilter, RenkoNoiseKiller, SignalAction
+from .strategies import LONG, SHORT, InstitutionalFilter, RenkoNoiseKiller, SignalAction
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +38,8 @@ class Engine:
         self.config = config
         self.auth = UpstoxAuth(config)
         self.history = HistoricalData(self.auth)
-        self.instruments = InstrumentMaster()
+        self.instruments: InstrumentMaster | None = None
+        self.universe: list[dict] = []
         self.chain = OptionChain(self.auth)
         self.quotes = RestQuotes(self.auth)
         self.broker = UpstoxBroker(self.auth, paper_trading=config.paper_trading)
@@ -54,6 +56,33 @@ class Engine:
             atr_period=sr.get("atr_period", 14),
             percent_box=sr.get("percent_box", 0.01),
         )
+
+    # ------------------------------------------------------------------ #
+    def load_universe(self, force_refresh: bool | None = None) -> list[dict]:
+        """Pull the live F&O stock universe from the exchange instrument
+        master. Called at application start - the list is never hardcoded."""
+        if force_refresh is None:
+            force_refresh = bool(self.config.get("universe.refresh_on_start", True))
+        self.instruments = InstrumentMaster(force_refresh=force_refresh)
+        universe = self.instruments.fo_underlyings()
+        max_symbols = int(self.config.get("universe.max_symbols", 0))
+        if max_symbols > 0:
+            universe = universe[:max_symbols]
+        self.universe = universe
+        log.info("universe loaded from instrument master: %d F&O underlyings%s",
+                 len(universe),
+                 f" (capped at {max_symbols})" if max_symbols else "")
+        return universe
+
+    def ensure_universe(self) -> list[dict]:
+        if not self.universe:
+            self.load_universe()
+        return self.universe
+
+    def _master(self) -> InstrumentMaster:
+        if self.instruments is None:
+            self.instruments = InstrumentMaster()
+        return self.instruments
 
     # ------------------------------------------------------------------ #
     def run_cycle(self) -> None:
@@ -83,6 +112,10 @@ class Engine:
             )
 
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _position_direction(pos: Position) -> int:
+        return LONG if pos.option_type == "CE" else SHORT
+
     def _manage_exits(self) -> None:
         days_before = int(self.config.get("risk.square_off_days_before_expiry", 5))
         for pos in self.store.open_positions():
@@ -102,8 +135,9 @@ class Engine:
                 except Exception:
                     log.exception("daily data fetch failed for %s; keeping position", pos.symbol)
                     continue
+                direction = self._position_direction(pos)
                 strategy = self.renko if pos.strategy == self.renko.name else self.institutional
-                signal = strategy.check_exit(pos.symbol, df_daily)
+                signal = strategy.check_exit(pos.symbol, df_daily, direction)
                 if signal.action is SignalAction.EXIT:
                     reason = signal.reason
 
@@ -138,7 +172,7 @@ class Engine:
             log.info("max open positions reached (%s); skipping entry scan", open_count)
             return
 
-        for entry in self.config.get("universe", []):
+        for entry in self.ensure_universe():
             symbol, key = entry["symbol"], entry["instrument_key"]
             if open_count >= max_open:
                 break
@@ -152,25 +186,29 @@ class Engine:
                 continue
 
             signals = []
-            if self.config.get("strategies.institutional_filter.enabled", True):
-                signals.append(self.institutional.evaluate(symbol, df_daily, df_hourly))
-            if self.config.get("strategies.renko_noise_killer.enabled", True):
-                signals.append(self.renko.evaluate(symbol, df_daily))
+            for direction in (LONG, SHORT):
+                if self.config.get("strategies.institutional_filter.enabled", True):
+                    signals.append(self.institutional.evaluate(
+                        symbol, df_daily, df_hourly, direction))
+                if self.config.get("strategies.renko_noise_killer.enabled", True):
+                    signals.append(self.renko.evaluate(symbol, df_daily, direction))
 
             for signal in signals:
-                if signal.action is not SignalAction.ENTER_LONG:
+                if signal.action not in (SignalAction.ENTER_LONG, SignalAction.ENTER_SHORT):
                     log.debug("%s/%s: %s", symbol, signal.strategy, signal.reason)
                     continue
                 if self.store.has_open_position(symbol, signal.strategy):
                     continue
-                if self._enter_position(symbol, key, signal.strategy, signal.reason):
+                if self._enter_position(symbol, key, signal.strategy,
+                                        signal.reason, signal.direction):
                     open_count += 1
 
     def _enter_position(self, symbol: str, underlying_key: str,
-                        strategy: str, reason: str) -> bool:
+                        strategy: str, reason: str, direction: int = LONG) -> bool:
         cfg = self.config
+        option_type = "CE" if direction == LONG else "PE"
         # 1. far-month expiry (T+2..T+3)
-        expiries = self.instruments.expiries(symbol)
+        expiries = self._master().expiries(symbol)
         expiry = risk.select_far_month_expiry(
             expiries,
             months_ahead_min=int(cfg.get("risk.expiry_months_ahead_min", 2)),
@@ -180,23 +218,25 @@ class Engine:
             log.warning("%s: no T+2/T+3 month expiry listed; skipping", symbol)
             return False
 
-        # 2. ITM call in the delta band from the option chain greeks
+        # 2. ITM option in the delta band from the option chain greeks
         try:
             chain = self.chain.fetch(underlying_key, expiry)
         except Exception:
             log.exception("%s: option chain fetch failed", symbol)
             return False
-        pick = risk.select_itm_call(
+        pick = risk.select_itm_option(
             chain,
+            option_type=option_type,
             delta_min=float(cfg.get("risk.delta_min", 0.70)),
             delta_max=float(cfg.get("risk.delta_max", 0.85)),
         )
         if not pick:
-            log.warning("%s: no call with delta in band for %s; skipping", symbol, expiry)
+            log.warning("%s: no %s with |delta| in band for %s; skipping",
+                        symbol, option_type, expiry)
             return False
 
         contracts = {c.instrument_key: c for c in
-                     self.instruments.option_contracts(symbol, "CE")}
+                     self._master().option_contracts(symbol, option_type)}
         contract = contracts.get(pick.instrument_key)
         if not contract:
             log.warning("%s: %s missing from instrument master", symbol, pick.instrument_key)
@@ -228,7 +268,7 @@ class Engine:
             underlying_key=underlying_key,
             option_key=pick.instrument_key,
             trading_symbol=contract.trading_symbol,
-            option_type="CE",
+            option_type=option_type,
             strike=pick.strike,
             expiry=expiry,
             lot_size=contract.lot_size,
@@ -237,9 +277,11 @@ class Engine:
             entry_date=dt.date.today(),
             strategy=strategy,
             meta={"reason": reason, "delta": pick.delta, "iv": pick.iv,
+                  "direction": "LONG" if direction == LONG else "SHORT",
                   "order_id": result.order_id, "paper": result.paper},
         ))
-        log.info("ENTER %s %s x%s @ %s (delta=%.2f, expiry=%s) | %s | order=%s",
-                 symbol, contract.trading_symbol, quantity, price, pick.delta,
+        log.info("ENTER %s %s %s x%s @ %s (delta=%.2f, expiry=%s) | %s | order=%s",
+                 "LONG" if direction == LONG else "SHORT", symbol,
+                 contract.trading_symbol, quantity, price, pick.delta,
                  expiry, reason, result.order_id)
         return True

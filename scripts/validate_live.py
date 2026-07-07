@@ -35,7 +35,12 @@ def main() -> None:
     s1 = InstitutionalFilter()
     s2 = RenkoNoiseKiller()
 
-    for entry in cfg.get("universe", []):
+    from stocklong.runner import Engine
+    engine = Engine(cfg)
+    universe = engine.load_universe()  # live F&O list from the exchange
+    limit = int(cfg.get("scan.top_n", 25)) or len(universe)
+
+    for entry in universe[:limit]:
         symbol, key = entry["symbol"], entry["instrument_key"]
         print(f"\n=== {symbol} ({key}) " + "=" * max(0, 50 - len(symbol)))
         try:

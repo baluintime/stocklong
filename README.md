@@ -5,16 +5,19 @@ Systematic long-options engine for NSE stock options, implementing the
 
 | Blueprint element | Where it lives |
 |---|---|
-| Strategy 1: Multi-Timeframe Institutional Filter (Daily Ichimoku cloud + hourly TK cross + hourly MACD near zero) | `stocklong/strategies/institutional_filter.py` |
-| Strategy 2: Daily Renko Noise-Killer (ATR/1% bricks + Renko-MACD, 2-green entry / 2-red exit) | `stocklong/strategies/renko_noise_killer.py` |
+| Strategy 1: Multi-Timeframe Institutional Filter — long AND short mirrors (Daily Ichimoku cloud + hourly TK cross + hourly MACD near zero) | `stocklong/strategies/institutional_filter.py` |
+| Strategy 2: Daily Renko Noise-Killer — long AND short mirrors (ATR/1% bricks + Renko-MACD, 2-brick entry/exit) | `stocklong/strategies/renko_noise_killer.py` |
+| Confluence scanner: 0–100 score per stock on BOTH sides, ranked scoreboard | `stocklong/scanner.py` |
+| **Live F&O universe** from the exchange instrument master at every start — no hardcoded stock lists | `stocklong/data/instruments.py` (`fo_underlyings`) |
 | Ichimoku (9, 26, 52), MACD (12, 26, 9), Renko engine | `stocklong/indicators/` |
 | Historical candles (daily + hourly, Upstox V3 API) | `stocklong/data/historical.py` |
 | Real-time data (V3 websocket via official SDK + REST LTP fallback) | `stocklong/data/realtime.py` |
-| Option chain greeks → ITM delta 0.70–0.85 selection | `stocklong/data/option_chain.py`, `stocklong/portfolio/risk.py` |
+| Option chain greeks → ITM \|delta\| 0.70–0.85 (calls for long, puts for short) | `stocklong/data/option_chain.py`, `stocklong/portfolio/risk.py` |
 | Far-month (T+2/T+3) expiry selection, limit-orders-only, position sizing | `stocklong/portfolio/risk.py` |
 | **Multi-day position persistence** (SQLite, survives restarts; broker reconciliation) | `stocklong/portfolio/positions.py` |
 | Mandatory square-off ≥5 trading days before expiry (physical settlement rule) | `stocklong/portfolio/risk.py` + `stocklong/runner.py` |
 | Orders (LIMIT only, product `D` carry-forward, paper mode) | `stocklong/broker/upstox_broker.py` |
+| FastAPI dashboard, auto-refreshing (OAuth, scoreboard, engine, positions, logs) | `stocklong/web/` |
 
 ## Setup
 
@@ -33,7 +36,7 @@ UPSTOX_API_SECRET=your-app-secret
 UPSTOX_REDIRECT_URI=http://localhost:8080/callback   # must match your app
 ```
 
-## Web dashboard (recommended)
+## Web dashboard (FastAPI, recommended)
 
 Everything runs from the browser — including the daily Upstox login, with no
 manual code copying:
@@ -42,14 +45,22 @@ manual code copying:
 python scripts/webapp.py       # then open http://localhost:8080
 ```
 
+- **Startup**: the F&O stock universe is rebuilt from the exchange's live
+  instrument master — no stock list is hardcoded anywhere.
 - **Login with Upstox** button → the OAuth redirect lands on
   `http://localhost:8080/callback` and the day's token is cached
   automatically. Set exactly that redirect URI on your Upstox app
   (https://account.upstox.com/developer/apps) and in `.env`.
-- **Run screener** → scans the universe with both strategies, results in a table.
-- **Start engine loop** → hourly blueprint cycle (exits → entries) during
-  market hours; positions persist in SQLite across days/restarts.
-- Live positions table and engine log stream on the same page.
+- **Confluence scoreboard**: every stock scored 0–100 on BOTH sides
+  (LONG = buy ITM call, SHORT = buy ITM put), ranked by the stronger side —
+  the highest-success setups float to the top. Component breakdown per row
+  (Macro cloud 30 / TK 20 / MACD 20 / Renko 30). Rescans automatically every
+  `scan.auto_interval_minutes` while the market is open; the page refreshes
+  itself, no reloads.
+- **Start engine loop** → hourly blueprint cycle (exits → entries, both
+  directions) during market hours; positions persist in SQLite across
+  days/restarts.
+- Live positions table (with LONG/SHORT badges) and streaming engine log.
 
 Upstox tokens expire daily (~3:30 AM IST) — each morning is just one click on
 the dashboard's login button.
