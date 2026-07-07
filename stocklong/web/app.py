@@ -60,8 +60,16 @@ class DashboardState:
 
         self.universe_status = {"count": 0, "loaded_at": None, "error": None}
         self.scan = {"status": "idle", "progress": 0, "total": 0,
-                     "rows": [], "updated_at": None}
+                     "rows": [], "updated_at": None, "kind": None}
         self._scan_lock = threading.Lock()
+
+        # Full scans run only at opening and close; the opening scan's #1
+        # setup becomes the day's pick and is tracked for the rest of the day.
+        self.day_pick: dict | None = None
+        self.track: list[dict] = []
+        self.opening_scan_date: dt.date | None = None
+        self.closing_scan_date: dt.date | None = None
+        self._last_track = 0.0
 
         self.loop_running = False
         self.last_cycle: dt.datetime | None = None
@@ -108,16 +116,17 @@ class DashboardState:
         return now.weekday() < 5 and MARKET_OPEN <= now.time() <= MARKET_CLOSE
 
     # --- scanner ---------------------------------------------------------- #
-    def run_scan_async(self) -> bool:
+    def run_scan_async(self, kind: str = "manual") -> bool:
         with self._scan_lock:
             if self.scan["status"] == "running":
                 return False
             self.scan = {"status": "running", "progress": 0, "total": 0,
-                         "rows": self.scan["rows"], "updated_at": self.scan["updated_at"]}
-        threading.Thread(target=self._scan_worker, daemon=True).start()
+                         "rows": self.scan["rows"],
+                         "updated_at": self.scan["updated_at"], "kind": kind}
+        threading.Thread(target=self._scan_worker, args=(kind,), daemon=True).start()
         return True
 
-    def _scan_worker(self) -> None:
+    def _scan_worker(self, kind: str = "manual") -> None:
         try:
             engine = self.engine()
             universe = engine.ensure_universe()
@@ -153,13 +162,79 @@ class DashboardState:
                     "status": "done", "progress": len(universe), "total": len(universe),
                     "rows": rows[:top_n] if top_n else rows,
                     "updated_at": dt.datetime.now(IST).isoformat(timespec="seconds"),
+                    "kind": kind,
                 }
-            log.info("scan complete: %d symbols scored", len(rows))
+            log.info("%s scan complete: %d symbols scored", kind, len(rows))
+            self._after_full_scan(kind, rows)
         except Exception as exc:
             log.exception("scan failed")
             with self._scan_lock:
                 self.scan = {"status": "error", "progress": 0, "total": 0,
-                             "rows": [], "updated_at": None, "error": str(exc)}
+                             "rows": [], "updated_at": None, "kind": kind,
+                             "error": str(exc)}
+
+    def _after_full_scan(self, kind: str, rows: list[dict]) -> None:
+        today = dt.datetime.now(IST).date()
+        if kind in ("opening", "manual"):
+            self.opening_scan_date = today
+            # lock in the day's pick from the first full scan of the day
+            if rows and (self.day_pick is None
+                         or self.day_pick["date"] != today.isoformat()):
+                top = rows[0]
+                key = next((e["instrument_key"]
+                            for e in self.engine().ensure_universe()
+                            if e["symbol"] == top["symbol"]), None)
+                self.day_pick = {**top, "date": today.isoformat(),
+                                 "instrument_key": key,
+                                 "picked_at": dt.datetime.now(IST).isoformat(timespec="seconds")}
+                self.track = []
+                self._last_track = 0.0
+                if key:
+                    # engine entry hunting narrows to the day's pick as well
+                    self.engine().set_focus(
+                        [{"symbol": top["symbol"], "instrument_key": key}])
+                log.info("DAY PICK: %s %s (score %s) - tracking it for the rest "
+                         "of the day; next full scan at the close",
+                         top["symbol"], top["side"], top["score"])
+        elif kind == "closing":
+            self.closing_scan_date = today
+
+    def _track_pick(self) -> None:
+        """Intraday re-score of ONLY the day's pick (2 candle calls + 1 LTP)."""
+        pick = self.day_pick
+        if not pick or not pick.get("instrument_key"):
+            return
+        try:
+            engine = self.engine()
+            cfg = self.config
+            key = pick["instrument_key"]
+            df_d = engine.history.daily(key, cfg.get("history.daily_lookback_days", 400))
+            df_h = engine.history.hourly(key, cfg.get("history.hourly_lookback_days", 60))
+            both = scanner.score_both_sides(pick["symbol"], key, df_d, df_h)
+            best = scanner.best_side(both)
+            try:
+                ltp = engine.quotes.ltp([key]).get(key) or best.close
+            except Exception:
+                ltp = best.close
+            snap = {
+                "time": dt.datetime.now(IST).isoformat(timespec="seconds"),
+                "ltp": round(float(ltp), 2),
+                "score": best.score, "side": best.side,
+                "long_score": both[0].score, "short_score": both[1].score,
+            }
+            self.track.append(snap)
+            if len(self.track) > 200:
+                self.track = self.track[-200:]
+            self.day_pick.update({
+                "current_score": best.score, "current_side": best.side,
+                "ltp": snap["ltp"], "long_score": both[0].score,
+                "short_score": both[1].score,
+                "last_tracked": snap["time"],
+            })
+            log.info("track %s: ltp %.2f, score %s (%s)",
+                     pick["symbol"], ltp, best.score, best.side)
+        except Exception:
+            log.exception("tracking %s failed", pick["symbol"])
 
     # --- automatic re-scan ------------------------------------------------ #
     def start_auto_scan(self) -> None:
@@ -170,16 +245,31 @@ class DashboardState:
         self._auto_thread.start()
 
     def _auto_worker(self) -> None:
-        interval = int(self.config.get("scan.auto_interval_minutes", 15)) * 60
-        last_scan = 0.0
+        """Daily rhythm: full scan at opening -> lock the day's pick ->
+        track only the pick intraday -> one full scan at the close."""
+        track_interval = int(self.config.get("scan.track_interval_minutes", 15)) * 60
+        close_hh, close_mm = (
+            str(self.config.get("scan.closing_scan_time", "15:20")).split(":"))
+        closing_time = dt.time(int(close_hh), int(close_mm))
         while self._auto_running:
-            now = time.time()
-            token_ok = self.token_status()["ok"]
-            never_ran = self.scan["updated_at"] is None
-            due = now - last_scan >= interval
-            if token_ok and (never_ran or (due and self.market_open())):
-                if self.run_scan_async():
-                    last_scan = now
+            if not self.token_status()["ok"]:
+                time.sleep(20)
+                continue
+            now = dt.datetime.now(IST)
+            today = now.date()
+
+            if self.opening_scan_date != today:
+                # first full scan of the day (also covers app started mid-day)
+                self.run_scan_async("opening")
+            elif (now.weekday() < 5 and now.time() >= closing_time
+                  and self.closing_scan_date != today):
+                self.run_scan_async("closing")
+            elif (self.market_open(now)
+                  and self.day_pick and self.day_pick["date"] == today.isoformat()
+                  and time.time() - self._last_track >= track_interval
+                  and self.scan["status"] != "running"):
+                self._last_track = time.time()
+                self._track_pick()
             time.sleep(20)
 
     # --- engine loop -------------------------------------------------------- #
@@ -271,6 +361,12 @@ def create_app(config: Config | None = None) -> FastAPI:
             "scan_status": state.scan["status"],
             "scan_progress": state.scan["progress"],
             "scan_total": state.scan["total"],
+            "scan_kind": state.scan.get("kind"),
+            "pick_symbol": state.day_pick["symbol"] if state.day_pick else None,
+            "opening_scan_date": state.opening_scan_date.isoformat()
+                                 if state.opening_scan_date else None,
+            "closing_scan_date": state.closing_scan_date.isoformat()
+                                 if state.closing_scan_date else None,
         }
 
     @app.get("/api/scan")
@@ -279,7 +375,11 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.post("/api/scan")
     def api_scan_run():
-        return {"started": state.run_scan_async(), "status": state.scan["status"]}
+        return {"started": state.run_scan_async("manual"), "status": state.scan["status"]}
+
+    @app.get("/api/pick")
+    def api_pick():
+        return {"pick": state.day_pick, "track": state.track}
 
     @app.get("/api/positions")
     def api_positions():

@@ -105,6 +105,30 @@
       <div class="hint" id="cycle-detail"></div>
     </div>
 
+    <div class="panel wide" id="pick-panel">
+      <h2><span>Today's pick <span class="meta" id="pick-meta"></span></span></h2>
+      <div id="pick-empty" class="hint" style="margin:0">No pick yet — the
+        opening full scan selects the day's #1 setup, which is then tracked
+        every few minutes for the rest of the session.</div>
+      <div id="pick-body" style="display:none">
+        <div style="display:flex; gap:26px; align-items:center; flex-wrap:wrap;
+                    margin-bottom:10px">
+          <span style="font-size:24px; font-weight:700" id="pick-symbol"></span>
+          <span class="badge" id="pick-side"></span>
+          <span>pick score <b id="pick-score0"></b></span>
+          <span>now <b id="pick-score"></b></span>
+          <span>LTP <b id="pick-ltp"></b></span>
+          <span class="comp" id="pick-ls"></span>
+        </div>
+        <div class="tablewrap"><table id="tbl-track">
+          <thead><tr><th>Time</th><th>LTP</th><th>Score</th><th>Side</th>
+            <th>Long</th><th>Short</th></tr></thead>
+          <tbody><tr><td colspan="6" class="reason">first track snapshot due
+            shortly…</td></tr></tbody>
+        </table></div>
+      </div>
+    </div>
+
     <div class="panel wide">
       <h2>
         <span>Confluence scoreboard
@@ -118,7 +142,8 @@
         the exchange, refreshed at startup) is scored 0–100 on BOTH sides;
         the table shows each stock's stronger side, best setups first.
         Components: <b>M</b>acro cloud 30 · <b>TK</b> 20 · <b>MACD</b> 20 ·
-        <b>R</b>enko 30. Auto-rescans while the market is open.</div>
+        <b>R</b>enko 30. Full scans run only at the opening and the close —
+        in between, only the day's pick is tracked.</div>
       <div class="tablewrap"><table id="tbl-scan">
         <thead><tr><th>#</th><th>Symbol</th><th>Side</th><th>Score</th>
           <th>Close</th><th>M</th><th>TK</th><th>MACD</th><th>R</th>
@@ -211,6 +236,40 @@ async function refreshScan() {
     }).join('');
   } catch (e) {}
 }
+async function refreshPick() {
+  try {
+    const r = await (await fetch('/api/pick')).json();
+    const empty = document.getElementById('pick-empty');
+    const body = document.getElementById('pick-body');
+    if (!r.pick) { empty.style.display = 'block'; body.style.display = 'none'; return; }
+    empty.style.display = 'none'; body.style.display = 'block';
+    const p = r.pick;
+    document.getElementById('pick-symbol').textContent = p.symbol;
+    const sideEl = document.getElementById('pick-side');
+    const side = p.current_side || p.side;
+    sideEl.textContent = side;
+    sideEl.className = 'badge ' + (side === 'LONG' ? 'long' : 'short');
+    document.getElementById('pick-score0').textContent = p.score;
+    document.getElementById('pick-score').textContent = p.current_score ?? p.score;
+    document.getElementById('pick-ltp').textContent = p.ltp ?? p.close;
+    document.getElementById('pick-ls').textContent =
+      'L ' + (p.long_score ?? '—') + ' / S ' + (p.short_score ?? '—');
+    document.getElementById('pick-meta').textContent =
+      ' — picked ' + p.picked_at.slice(11, 19) +
+      (p.last_tracked ? ' · tracked ' + p.last_tracked.slice(11, 19) : '');
+    if (r.track && r.track.length) {
+      document.querySelector('#tbl-track tbody').innerHTML =
+        r.track.slice(-24).reverse().map(t => {
+          const cls = t.side === 'LONG' ? 'long' : 'short';
+          return `<tr><td>${t.time.slice(11,19)}</td><td>${t.ltp}</td>` +
+            `<td><b>${t.score}</b></td>` +
+            `<td><span class="badge ${cls}">${t.side}</span></td>` +
+            `<td class="comp">${t.long_score}</td>` +
+            `<td class="comp">${t.short_score}</td></tr>`;
+        }).join('');
+    }
+  } catch (e) {}
+}
 async function refreshPositions() {
   try {
     const rows = await (await fetch('/api/positions')).json();
@@ -235,10 +294,11 @@ async function refreshLogs() {
     if (atBottom) el.scrollTop = el.scrollHeight;
   } catch (e) {}
 }
-refreshStatus(); refreshPositions(); refreshLogs();
+refreshStatus(); refreshPositions(); refreshLogs(); refreshPick();
 setInterval(refreshStatus, 4000);
 setInterval(refreshPositions, 15000);
 setInterval(refreshLogs, 5000);
+setInterval(refreshPick, 10000);
 </script>
 </body>
 </html>

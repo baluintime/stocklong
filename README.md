@@ -54,9 +54,14 @@ python scripts/webapp.py       # then open http://localhost:8080
 - **Confluence scoreboard**: every stock scored 0–100 on BOTH sides
   (LONG = buy ITM call, SHORT = buy ITM put), ranked by the stronger side —
   the highest-success setups float to the top. Component breakdown per row
-  (Macro cloud 30 / TK 20 / MACD 20 / Renko 30). Rescans automatically every
-  `scan.auto_interval_minutes` while the market is open; the page refreshes
-  itself, no reloads.
+  (Macro cloud 30 / TK 20 / MACD 20 / Renko 30).
+- **Two full scans a day, one pick**: the full universe is fetched only at
+  the **opening** and again near the **close** (`scan.closing_scan_time`).
+  The opening scan's #1 setup is locked in as **today's pick** and tracked
+  every `scan.track_interval_minutes` for the rest of the session (LTP +
+  fresh score snapshots in the "Today's pick" panel). The engine's entry
+  hunting narrows to the pick too, so intraday API load is just a few calls
+  per interval instead of hundreds. The page refreshes itself, no reloads.
 - **Start engine loop** → hourly blueprint cycle (exits → entries, both
   directions) during market hours; positions persist in SQLite across
   days/restarts.

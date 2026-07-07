@@ -20,9 +20,13 @@ universe:
   refresh_on_start: true   # re-download the instrument master on startup
   max_symbols: 0           # 0 = scan the entire F&O universe; N = first N symbols
 
+# Full-universe scans run only TWICE a day: at market opening and near the
+# close. The opening scan's #1 setup becomes the day's pick, which is then
+# tracked on an interval for the rest of the session (score + LTP snapshots).
 scan:
-  auto_interval_minutes: 15  # dashboard auto-rescans this often while market is open
-  top_n: 25                  # scoreboard rows shown (0 = all)
+  top_n: 25                   # scoreboard rows shown (0 = all)
+  track_interval_minutes: 15  # how often the day's pick is re-scored intraday
+  closing_scan_time: "15:20"  # IST; the second (end-of-day) full scan
 
 history:
   daily_lookback_days: 400      # enough for Ichimoku 52 + shift 26 on daily

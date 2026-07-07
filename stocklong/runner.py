@@ -40,6 +40,10 @@ class Engine:
         self.history = HistoricalData(self.auth)
         self.instruments: InstrumentMaster | None = None
         self.universe: list[dict] = []
+        # When set (e.g. to the day's top pick), entry scans cover ONLY these
+        # symbols instead of the whole universe. Exits always cover every
+        # open position regardless.
+        self.focus: list[dict] | None = None
         self.chain = OptionChain(self.auth)
         self.quotes = RestQuotes(self.auth)
         self.broker = UpstoxBroker(self.auth, paper_trading=config.paper_trading)
@@ -78,6 +82,12 @@ class Engine:
         if not self.universe:
             self.load_universe()
         return self.universe
+
+    def set_focus(self, entries: list[dict] | None) -> None:
+        self.focus = entries
+        if entries:
+            log.info("engine entry scan focused on: %s",
+                     ", ".join(e["symbol"] for e in entries))
 
     def _master(self) -> InstrumentMaster:
         if self.instruments is None:
@@ -172,7 +182,8 @@ class Engine:
             log.info("max open positions reached (%s); skipping entry scan", open_count)
             return
 
-        for entry in self.ensure_universe():
+        scan_list = self.focus if self.focus else self.ensure_universe()
+        for entry in scan_list:
             symbol, key = entry["symbol"], entry["instrument_key"]
             if open_count >= max_open:
                 break
